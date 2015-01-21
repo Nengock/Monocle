@@ -1,0 +1,29 @@
+{
+  "name": "monocle",
+  "version": "3.2.0",
+  "homepage": "https://github.com/Nengock/Monocle",
+  "authors": [
+    "Joshep"
+  ],
+  "main": [
+    "dist/scripts/monocore.js",
+    "dist/scripts/monoctrl.js",
+    "dist/styles/monocore.css",
+    "dist/styles/monoctrl.css"
+  ],
+  "keywords": [
+    "monocle",
+    "eareader"
+  ],
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests",
+    "styles",
+    "src"
+  ]
+}
