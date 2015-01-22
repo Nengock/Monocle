@@ -391,6 +391,7 @@ Monocle.Controls.Scrubber = function (reader) {
     }
     var place = p.reader.getPlace();
     var x = placeToPixel(place, p.reader.dom.find(k.CLS.container));
+    var needle, i = 0;
     for (var i = 0, needle; needle = p.reader.dom.find(k.CLS.needle, i); ++i) {
       setX(needle, x - needle.offsetWidth / 2);
       p.reader.dom.find(k.CLS.trail, i).style.width = x + "px";
@@ -453,7 +454,6 @@ Monocle.Controls.Scrubber = function (reader) {
     }
 
     var startFn = function (evt) {
-      evt.stopPropagation();
       bubble.style.display = "block";
       moveEvt(evt);
       cntrListeners = Monocle.Events.listenForContact(
@@ -495,6 +495,7 @@ Monocle.Controls.Spinner = function (reader) {
   var p = API.properties = {
     reader: reader,
     divs: [],
+    spinCount: 0,
     repeaters: {},
     showForPages: []
   }
@@ -502,13 +503,12 @@ Monocle.Controls.Spinner = function (reader) {
 
   function createControlElements(cntr) {
     var anim = cntr.dom.make('div', 'controls_spinner_anim');
-    anim.dom.append('div', 'controls_spinner_inner');
     p.divs.push(anim);
     return anim;
   }
 
 
-  function registerSpinEvent(startEvtType, stopEvtType) {
+  function registerSpinEvt(startEvtType, stopEvtType) {
     var label = startEvtType;
     p.reader.listen(startEvtType, function (evt) { spin(label, evt) });
     p.reader.listen(stopEvtType, function (evt) { spun(label, evt) });
@@ -518,13 +518,11 @@ Monocle.Controls.Spinner = function (reader) {
   // Registers spin/spun event handlers for certain time-consuming events.
   //
   function listenForUsualDelays() {
-    registerSpinEvent('monocle:componentloading', 'monocle:componentloaded');
-    registerSpinEvent('monocle:componentchanging', 'monocle:componentchange');
-    registerSpinEvent('monocle:resizing', 'monocle:resize');
-    registerSpinEvent('monocle:jumping', 'monocle:jump');
-    registerSpinEvent('monocle:recalculating', 'monocle:recalculated');
-    p.reader.listen('monocle:notfound', forceSpun);
-    p.reader.listen('monocle:componentfailed', forceSpun);
+    registerSpinEvt('monocle:componentloading', 'monocle:componentloaded');
+    registerSpinEvt('monocle:componentchanging', 'monocle:componentchange');
+    registerSpinEvt('monocle:resizing', 'monocle:resize');
+    registerSpinEvt('monocle:jumping', 'monocle:jump');
+    registerSpinEvt('monocle:recalculating', 'monocle:recalculated');
   }
 
 
@@ -532,6 +530,7 @@ Monocle.Controls.Spinner = function (reader) {
   //
   function spin(label, evt) {
     label = label || k.GENERIC_LABEL;
+    //console.log('Spinning on ' + (evt ? evt.type : label));
     p.repeaters[label] = true;
     p.reader.showControl(API);
 
@@ -539,16 +538,13 @@ Monocle.Controls.Spinner = function (reader) {
     // don't show the animation. p.global ensures that if an event affects
     // all pages, the animation is always shown, even if other events in this
     // spin cycle are page-specific.
-    var page = (evt && evt.m && evt.m.page) ? evt.m.page : null;
-    if (page && p.divs.length > 1) {
-      p.showForPages[page.m.pageIndex] = true;
-    } else {
-      p.global = true;
-      p.reader.dispatchEvent('monocle:modal:on');
-    }
+    var page = evt && evt.m && evt.m.page ? evt.m.page : null;
+    if (!page) { p.global = true; }
     for (var i = 0; i < p.divs.length; ++i) {
-      var show = (p.global || p.showForPages[i]) ? true : false;
-      p.divs[i].dom[show ? 'removeClass' : 'addClass']('dormant');
+      var owner = p.divs[i].parentNode.parentNode;
+      if (page == owner) { p.showForPages.push(page); }
+      var show = p.global || p.showForPages.indexOf(page) >= 0;
+      p.divs[i].style.display = show ? 'block' : 'none';
     }
   }
 
@@ -557,31 +553,21 @@ Monocle.Controls.Spinner = function (reader) {
   //
   function spun(label, evt) {
     label = label || k.GENERIC_LABEL;
+    //console.log('Spun on ' + (evt ? evt.type : label));
     p.repeaters[label] = false;
     for (var l in p.repeaters) {
       if (p.repeaters[l]) { return; }
     }
-    forceSpun();
-  }
-
-
-  function forceSpun() {
-    if (p.global) { p.reader.dispatchEvent('monocle:modal:off'); }
     p.global = false;
-    p.repeaters = {};
     p.showForPages = [];
-    for (var i = 0; i < p.divs.length; ++i) {
-      p.divs[i].dom.addClass('dormant');
-    }
+    p.reader.hideControl(API);
   }
 
 
   API.createControlElements = createControlElements;
-  API.registerSpinEvent = registerSpinEvent;
   API.listenForUsualDelays = listenForUsualDelays;
   API.spin = spin;
   API.spun = spun;
-  API.forceSpun = forceSpun;
 
   return API;
 }
@@ -706,7 +692,6 @@ Monocle.Controls.Stencil = function (reader, behaviorClasses) {
     } else {
       return;
     }
-    var boxes = p.components[cmptId];
 
     var doc = pageDiv.m.activeFrame.contentDocument;
     var offset = getOffset(pageDiv);
@@ -716,49 +701,23 @@ Monocle.Controls.Stencil = function (reader, behaviorClasses) {
       var elems = bhvr.findElements(doc);
       for (var i = 0; i < elems.length; ++i) {
         var elem = elems[i];
-        // Ensure that we're not already masking this element.
-        for (var k = 0, kk = boxes.length; k < kk; ++k) {
-          if (boxes[k].element == elem) {
-            elem = null;
-            break;
-          }
-        }
-        if (elem) {
-          var elemBoxes = boxesForNode(elem, offset);
-          for (var j = 0, jj = elemBoxes.length; j < jj; ++j) {
-            elemBoxes[j].element = elem;
-            elemBoxes[j].behavior = bhvr;
-            boxes.push(elemBoxes[j]);
+        if (elem.getClientRects) {
+          var r = elem.getClientRects();
+          for (var j = 0; j < r.length; j++) {
+            p.components[cmptId].push({
+              element: elem,
+              behavior: bhvr,
+              left: Math.ceil(r[j].left + offset.l),
+              top: Math.ceil(r[j].top),
+              width: Math.floor(r[j].width),
+              height: Math.floor(r[j].height)
+            });
           }
         }
       }
     }
 
     return p.components[cmptId];
-  }
-
-
-  function boxesForNode(node, offset) {
-    var boxes = [];
-    if (typeof node.childNodes != 'undefined' && node.childNodes.length) {
-      for (var i = 0, ii = node.childNodes.length; i < ii; ++i) {
-        boxes = boxes.concat(boxesForNode(node.childNodes[i], offset));
-      }
-    } else {
-      var rng = node.ownerDocument.createRange();
-      rng.selectNodeContents(node);
-      var r = rng.getClientRects();
-      for (var i = 0, ii = r.length; i < ii; ++i) {
-        var offl = Monocle.Browser.env.widthsIgnoreTranslate ? 0 : offset.l;
-        boxes.push({
-          left: Math.ceil(r[i].left + offl),
-          top: Math.ceil(r[i].top),
-          width: Math.floor(r[i].width),
-          height: Math.floor(r[i].height)
-        });
-      }
-    }
-    return boxes;
   }
 
 
@@ -808,8 +767,7 @@ Monocle.Controls.Stencil = function (reader, behaviorClasses) {
   // Is this area presently on the screen?
   //
   function rectVisible(rect, l, r) {
-    var mid = rect.left + (rect.width * 0.5);
-    return mid >= l && mid < r;
+    return rect.left >= l && rect.left < r;
   }
 
 
@@ -826,7 +784,7 @@ Monocle.Controls.Stencil = function (reader, behaviorClasses) {
   // Positions the stencil container over the active frame.
   //
   function alignToComponent(pageDiv) {
-    var cmpt = pageDiv.m.activeFrame.parentNode;
+    cmpt = pageDiv.m.activeFrame.parentNode;
     p.container.dom.setStyles({
       left: cmpt.offsetLeft+"px",
       top: cmpt.offsetTop+"px"
@@ -856,6 +814,34 @@ Monocle.Controls.Stencil = function (reader, behaviorClasses) {
     } else {
       p.container.dom.addClass(cls);
     }
+  }
+
+
+  function disable() {
+    p.disabled = true;
+    draw();
+  }
+
+
+  function enable() {
+    p.disabled = false;
+    draw();
+  }
+
+
+  function filterElement(elem, behavior) {
+    if (typeof behavior.filterElement == 'function') {
+      return behavior.filterElement(elem);
+    }
+    return elem;
+  }
+
+
+  function maskAssigned(elem, mask, behavior) {
+    if (typeof behavior.maskAssigned == 'function') {
+      return behavior.maskAssigned(elem, mask);
+    }
+    return false;
   }
 
 
@@ -899,32 +885,16 @@ Monocle.Controls.Stencil.Links = function (stencil) {
   //
   API.fitMask = function (link, mask) {
     var hrefObject = deconstructHref(link);
-    var rdr = stencil.properties.reader;
-    var evtData = { href: hrefObject, link: link, mask: mask }
-
-    if (hrefObject.pass) {
-      mask.onclick = function (evt) { return link.click(); }
-    } else {
-      link.onclick = function (evt) {
+    if (hrefObject.internal) {
+      mask.setAttribute('href', 'javascript:"Skip to chapter"');
+      Monocle.Events.listen(mask, 'click', function (evt) {
+        stencil.properties.reader.skipToChapter(hrefObject.internal);
         evt.preventDefault();
-        return false;
-      }
-      if (hrefObject.internal) {
-        mask.setAttribute('href', 'javascript:"Skip to chapter"');
-        mask.onclick = function (evt) {
-          if (rdr.dispatchEvent('monocle:link:internal', evtData, true)) {
-            rdr.skipToChapter(hrefObject.internal);
-          }
-          evt.preventDefault();
-          return false;
-        }
-      } else {
-        mask.setAttribute('href', hrefObject.external);
-        mask.setAttribute('target', '_blank');
-        mask.onclick = function (evt) {
-          return rdr.dispatchEvent('monocle:link:external', evtData, true);
-        }
-      }
+      });
+    } else {
+      mask.setAttribute('href', hrefObject.external);
+      mask.setAttribute('target', '_blank');
+      link.setAttribute('target', '_blank'); // For good measure.
     }
   }
 
@@ -946,50 +916,20 @@ Monocle.Controls.Stencil.Links = function (stencil) {
   // 'http://example.com/monocles/foo.html').
   //
   function deconstructHref(elem) {
-    var loc = document.location;
-    var origin = loc.protocol+'//'+loc.host;
-    var href = elem.href;
-    var path = href.substring(origin.length);
-    var ext = { external: href };
-
-    if (href.toLowerCase().match(/^javascript:/)) {
-      return { pass: true };
-    }
-
-    // Anchor tags with 'target' attributes are always external URLs.
-    if (elem.getAttribute('target')) {
-      return ext;
-    }
-    // URLs with a different protocol or domain are always external.
-    //console.log("Domain test: %s <=> %s", origin, href);
-    if (href.indexOf(origin) !== 0) {
-      return ext;
-    }
-
-    // If it is in a sub-path of the current path, it's internal.
-    var topPath = loc.pathname.replace(/[^\/]*\.[^\/]+$/,'');
-    if (topPath[topPath.length - 1] != '/') {
-      topPath += '/';
-    }
-    //console.log("Sub-path test: %s <=> %s", topPath, path);
-    if (path.indexOf(topPath) === 0) {
-      return { internal: path.substring(topPath.length) }
-    }
-
-    // If it's a root-relative URL and it's in our list of component ids,
-    // it's internal.
-    var cmptIds = stencil.properties.reader.getBook().properties.componentIds;
-    for (var i = 0, ii = cmptIds.length; i < ii; ++i) {
-      //console.log("Component test: %s <=> %s", cmptIds[i], path);
-      if (path.indexOf(cmptIds[i]) === 0) {
-        return { internal: path }
+    var url = elem.href;
+    if (!elem.getAttribute('target')) {
+      var m = url.match(/([^#]*)(#.*)?$/);
+      var path = m[1];
+      var anchor = m[2] || '';
+      var cmpts = stencil.properties.reader.getBook().properties.componentIds;
+      for (var i = 0, ii = cmpts.length; i < ii; ++i) {
+        if (path.substr(0 - cmpts[i].length) == cmpts[i]) {
+          return { internal: cmpts[i] + anchor };
+        }
       }
     }
-
-    // Otherwise it's external.
-    return ext;
+    return { external: url };
   }
-
 
   return API;
 }
